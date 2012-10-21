@@ -5,6 +5,7 @@ import cs224n.ling.Tree;
 import cs224n.ling.Trees;
 import cs224n.parser.EnglishPennTreebankParseEvaluator;
 import cs224n.util.*;
+import cs224n.util.PriorityQueue;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -44,13 +45,279 @@ public class PCFGParserTester {
 		public void train(List<Tree<String>> trainTrees) {
 			// TODO: before you generate your grammar, the training trees
 			// need to be binarized so that rules are at most binary
-			lexicon = new Lexicon(trainTrees);
-			grammar = new Grammar(trainTrees);
+			//Binarize the tree.
+			List<Tree<String>> binarizedTrees = new ArrayList<Tree<String>>();
+			
+			for( Tree<String> trainTree: trainTrees){
+				Tree<String> newTree = TreeAnnotations.annotateTree(trainTree);
+				binarizedTrees.add(newTree);
+				
+			}
+			lexicon = new Lexicon(binarizedTrees);
+			grammar = new Grammar(binarizedTrees);
+			System.out.println("trained!!");
 		}
 
 		public Tree<String> getBestParse(List<String> sentence) {
-			// TODO: implement this method
-			return null;
+			// TODO: This implements the CKY algorithm
+						
+			System.out.println(sentence.toString());
+			// First deal with the lexicons 
+			List<String> tags = new ArrayList<String>();
+			int index =0;
+			int span =1;// All spans are 1 at the lexicon level
+			CounterMap<String,String> parseScores;
+			parseScores= new CounterMap<String,String>();
+			for (String word : sentence) {
+				for (String tag : lexicon.getAllTags()) {
+					double score = lexicon.scoreTagging(word, tag);
+					if(score >=0.0){ // This lexicon may generate this word
+					  //We use a counter map in order to store the scores for this sentence parse.
+					  parseScores.setCount(  index+" "+(index+span), tag, score);
+					  	
+					}
+					
+				}
+				index = index +1;
+				
+			}
+			
+			// handle unary rules now 
+			HashMap<String, Triplet<Integer,String,String>> backHash = new HashMap<>(); // hashmap to store back propation
+			
+			//System.out.println("Lexicons found");
+			Boolean added = true;
+			
+			while (added){
+			  added = false;	
+			  for( index =0; index < sentence.size(); index++){
+				  // For each index+ span pair, get the counter.
+				  Counter<String> count = parseScores.getCounter(index+" "+ (index+span));
+				  PriorityQueue<String > countAsPQ = count.asPriorityQueue();
+			      while( countAsPQ.hasNext()) {
+			    	 String entry = countAsPQ.next();
+			      //System.out.println("I am fine here!!");
+			    	  List<UnaryRule> unaryRules =grammar.getUnaryRulesByChild(entry);
+			    	  for(UnaryRule rule : unaryRules){
+			    	      //These are the unary rules which might give rise to the above preterminal
+			    		  double prob = rule.getScore()*parseScores.getCount(index + " " +(index+span), entry);
+			    			if(prob > parseScores.getCount(index+" "+(index+span), rule.parent)){
+			    		      parseScores.setCount(index+" "+(index+span), rule.parent,prob);
+			    			  backHash.put(index + " "+ (index+span) + " "+rule.parent, new Triplet<Integer, String, String>(-1, entry , null));
+			    			  added = true; 
+			    		  }
+			    		
+			    	  }
+			      	
+			      }
+				
+			  }
+			}
+			//System.out.println("Lexicon unaries dealt with");
+						
+			// Now work with the grammar to produce higher level probabilities 
+			for(span =2 ; span <= sentence.size(); span++ ){
+			  for(int begin =0 ; begin <= (sentence.size()-span); begin++){
+				int end = begin + span;  
+				for(int split = begin +1 ; split <= end -1;split++){
+					Counter<String> countLeft = parseScores.getCounter(begin+ " " + split);
+					Counter<String> countRight = parseScores.getCounter(split+ " "+ end);
+					//List<BinaryRule> leftRules= new ArrayList<BinaryRule>();
+					HashMap<Integer, BinaryRule> leftMap = new HashMap<>();
+					//List<BinaryRule> rightRules=new ArrayList<BinaryRule>();
+					HashMap<Integer, BinaryRule> rightMap = new HashMap<>();
+
+					for (String entry: countLeft.keySet()){
+						for(BinaryRule rule: grammar.getBinaryRulesByLeftChild(entry)){
+							if(!leftMap.containsKey(rule.hashCode())){
+								leftMap.put(rule.hashCode(), rule);
+							}
+						}
+					}
+					
+					for(String entry: countRight.keySet()){
+						for(BinaryRule rule: grammar.getBinaryRulesByRightChild(entry)){
+							if(!rightMap.containsKey(rule.hashCode())){
+								rightMap.put(rule.hashCode(), rule);
+							}
+						}
+
+					}
+					
+					//System.out.println("About to enter the rules loops");
+							for(Integer ruleHash: leftMap.keySet()){	
+								if(rightMap.containsKey(ruleHash)){
+									BinaryRule ruleRight = rightMap.get(ruleHash);
+								  double prob = ruleRight.getScore()*parseScores.getCount(begin+" "+split, ruleRight.leftChild) *parseScores.getCount(split+" "+end, ruleRight.rightChild);
+								  //System.out.println(begin+" "+ end +" "+ ruleRight.parent+ " "+ prob);
+								  if(prob > parseScores.getCount(begin+" "+ end, ruleRight.parent)){
+									  //System.out.println(begin+" "+ end +" "+ ruleRight.parent+ " "+ prob);
+									 //System.out.println("parentrule :"+ ruleRight.getParent());
+								      parseScores.setCount(begin+ " "+ end, ruleRight.getParent(),prob);
+									  backHash.put(begin+" "+end+ " "+ruleRight.parent, new Triplet<Integer, String, String>(split, ruleRight.leftChild, ruleRight.rightChild));
+									
+							  	  }
+								}
+							 }	
+								
+							
+							
+				
+					//System.out.println("Exited rules loop");
+					
+					
+				}
+				//System.out.println("Grammar found for " + begin + " "+ end);
+				//Now handle unary rules
+				added = true;
+				while (added){
+					  added = false;	
+					  Counter<String> count = parseScores.getCounter(begin+" "+ end);
+					  PriorityQueue<String> countAsPriorityQueue = count.asPriorityQueue();
+					  while (countAsPriorityQueue.hasNext()) {
+					        String entry = countAsPriorityQueue.next();
+					    	List<UnaryRule> unaryRules =grammar.getUnaryRulesByChild(entry);
+					    	for(UnaryRule rule : unaryRules){
+					    		double prob = rule.getScore()* parseScores.getCount(begin + " " +(end), entry);
+					    		if(prob > parseScores.getCount(begin+" "+(end), rule.parent)){
+					    		    parseScores.setCount(begin+" "+(end), rule.parent,prob);
+					    		    
+					    		    backHash.put(begin + " "+ (end) + " "+rule.parent, new Triplet<Integer, String, String>(-1, entry , null));
+					    			added = true; 
+					    		 }
+					    		
+					    	  }
+					      	
+					      }					  
+					}			
+				
+				//System.out.println("Unaries dealt for " + begin + " "+ end);
+				  
+			  }				
+			}
+			
+			
+			// Create and return the parse tree
+			Tree<String> parseTree= new Tree<String>("null");
+			//System.out.println(parseScores.getCounter(0+" "+sentence.size()).toString());
+			String parent = parseScores.getCounter(0+" "+sentence.size()).argMax();
+			if(parent == null){
+				System.out.println(parseScores.getCounter(0+ " " + sentence.size()).toString());
+				System.out.println("THIS IS WEIRD");
+			}
+			parseTree=getParseTree(sentence,parseScores,backHash,0,sentence.size(),parent);
+			//System.out.println("PARSE SCORES");
+		//	System.out.println(parseScores.toString());
+			//System.out.println("BACK HASH");
+			//System.out.println(backHash.toString());
+			parseTree = addRoot(parseTree);
+			//System.out.println(parseTree.toString());
+			//return parseTree;
+			return TreeAnnotations.unAnnotateTree(parseTree);
+		}
+		
+		private Tree<String> addRoot(Tree<String> tree) {
+			return new Tree<String>("ROOT", Collections.singletonList(tree));
+		}
+		
+		public Tree<String> getParseTree(List<String> sentence,CounterMap<String, String> parseScores,HashMap<String, Triplet<Integer, String, String>> backHash,int begin, int end,String parent){
+			// Start from the root and keep going down till you reach the leafs.
+			//System.out.println("In recuresion!!");
+			if(begin == end -1){
+
+				if((begin +" " + end).equals("0 1")){
+					//System.out.println("CounterMap");
+					//System.out.println(parseScores.getCounter(begin+" "+end).toString());
+					//backHash.get(begin+ " " + end+ " "+parent);
+				}
+
+				
+				//String parent = parseScores.getCounter(begin+" "+end).argMax();
+
+				//System.out.println("Terminal cond :"+begin+ " "+ end+ " "+parent);
+				Triplet<Integer, String, String> triplet = backHash.get(begin+ " " + end+ " "+parent);
+				int split=-1;
+				if(triplet != null){
+					split = triplet.getFirst();
+				
+				}
+				if((begin +" " + end).equals("0 1")){
+					//System.out.println("CounterMap");
+					//System.out.println(parseScores.getCounter(begin+" "+end).toString());
+					//System.out.println(backHash.get(begin+ " " + end+ " "+parent).toString());
+				}
+
+				Tree<String> topTree = new Tree<String>(parent);
+				Tree<String> tree = topTree;
+				while(triplet!=null && split == -1){
+					
+					Tree<String> singleTree = new Tree<String>(triplet.getSecond());
+					tree.setChildren( Collections.singletonList(singleTree));
+
+					triplet = backHash.get(begin+ " " + end+ " "+triplet.getSecond());
+					if(triplet!=null){
+						split = triplet.getFirst();
+					}
+					tree = tree.getChildren().get(0);
+
+				}
+				
+				//return new Tree<String>(tree.getLabel(), ));
+				tree.setChildren(Collections.singletonList(new Tree<String>(sentence.get(begin))));
+				return topTree;
+			}
+			
+			/*if((begin +" " + end).equals("1 5")){
+				System.out.println("CounterMap");
+				System.out.println(parseScores.getCounter(begin+" "+end).toString());
+				//backHash.get(begin+ " " + end+ " "+parent);
+			}*/
+			//String parent = parseScores.getCounter(begin+" "+end).argMax();
+			//System.out.println(parent);
+			Triplet<Integer, String, String> triplet = backHash.get(begin+ " " + end+ " "+parent);
+			//System.out.println(triplet.getSecond() + "  " + triplet.getFirst());
+
+			if((begin +" " + end).equals("0 6")){
+				//System.out.println("CounterMap");
+				//System.out.println(parent);
+				//System.out.println(backHash.get(begin+ " " + end+ " "+parent).toString());
+			}
+
+			if(triplet==null){
+				System.out.println(begin+ " " + end+ " "+parent);
+			}
+			int split = triplet.getFirst();
+			Tree<String> topTree = new Tree<String>(parent);
+			Tree<String> tree = topTree;
+			//System.out.println("parent : " +parent);
+	     	while(split == -1){
+				//System.out.println(tree.toString());
+				Tree<String> singleTree = new Tree<String>(triplet.getSecond());
+				//System.out.println(triplet.getSecond());
+				tree.setChildren( Collections.singletonList(singleTree));
+				//System.out.println(tree.toString());
+				//System.out.println("XXXXXXXXXXXXXXXXXXXXXXXXXXXxx");
+				//System.out.println(triplet.getSecond());
+				triplet = backHash.get(begin+ " " + end+ " "+triplet.getSecond());
+				if(triplet!=null){
+				  split = triplet.getFirst();
+				}
+				tree = tree.getChildren().get(0);
+
+			}
+			//System.out.println(tree.toString());
+
+			Tree<String> leftTree = getParseTree(sentence,parseScores,backHash,begin,split,triplet.getSecond());
+			Tree<String> rightTree = getParseTree(sentence,parseScores,backHash,split,end,triplet.getThird());
+			//System.out.println("leftTree: "+ leftTree.toString());
+			//System.out.println("rightTree :" +rightTree.toString());
+			//System.out.println("topTree :"+topTree.toString());
+			List<Tree<String>> children = new ArrayList<Tree<String>>();
+			children.add(leftTree);
+			children.add(rightTree);
+			tree.setChildren( children);
+			return topTree;
+
 		}
 
 	}
@@ -646,10 +913,10 @@ public class PCFGParserTester {
 			trainTrees = readTrees(basePath, 200, 2199);
 			System.out.println("done.");
 			System.out.print("Loading validation trees...");
-			validationTrees = readTrees(basePath, 2200, 2299);
+			validationTrees = readTrees(basePath, 2200, 2202);
 			System.out.println("done.");
 			System.out.print("Loading test trees...");
-			testTrees = readTrees(basePath, 2300, 2319);
+			testTrees = readTrees(basePath, 2300, 2301);
 			System.out.println("done.");
 		}
 		else {

@@ -82,7 +82,8 @@ public class PCFGParserTester {
 			}
 			
 			// handle unary rules now 
-			HashMap<String, Triplet<Integer,String,String>> backHash = new HashMap<String, Triplet<Integer,String,String>>(); // hashmap to store back propation
+			HashMap<String, Triplet<Integer,String,String>> backHash =
+					new HashMap<String, Triplet<Integer,String,String>>(); // hashmap to store back propation
 			
 			//System.out.println("Lexicons found");
 			Boolean added = true;
@@ -218,7 +219,8 @@ public class PCFGParserTester {
 			int nEntries = sentence.size();
 
 			// hashmap to store back rules
-			HashMap<String, Triplet<Integer,String,String>> backHash = new HashMap<String, Triplet<Integer,String,String>>();
+			HashMap<Triplet<Integer, Integer, String>, Triplet<Integer,String,String>> backHash =
+					new HashMap<Triplet<Integer, Integer, String>, Triplet<Integer,String,String>>();
 
 			// more efficient access with arrays, but must cast each time :(
 			@SuppressWarnings("unchecked")
@@ -268,7 +270,7 @@ public class PCFGParserTester {
 			    		 double prob = rule.getScore()*parseScores[index][index+span - 1].getCount(entry);
 			    	     if(prob > parseScores[index][index+span - 1].getCount(rule.parent)) {
 			    		     parseScores[index][index+span - 1].setCount(rule.parent,prob);
-			    		     backHash.put(index + " "+ (index+span) + " "+rule.parent, new Triplet<Integer, String, String>(-1, entry , null));
+			    		     backHash.put(new Triplet<Integer, Integer, String>(index, index+span, rule.parent), new Triplet<Integer, String, String>(-1, entry , null));
 			    		     added = true; 
 			    		 }
 			    	 }
@@ -316,7 +318,7 @@ public class PCFGParserTester {
 							  //System.out.println(begin+" "+ end +" "+ ruleRight.parent+ " "+ prob);
 							 //System.out.println("parentrule :"+ ruleRight.getParent());
 						      parseScores[begin][end - 1].setCount(ruleRight.getParent(),prob);
-							  backHash.put(begin+" "+end+ " "+ruleRight.parent, new Triplet<Integer, String, String>(split, ruleRight.leftChild, ruleRight.rightChild));
+							  backHash.put(new Triplet<Integer, Integer, String>(begin, end, ruleRight.parent), new Triplet<Integer, String, String>(split, ruleRight.leftChild, ruleRight.rightChild));
 							
 					  	  }
 						}
@@ -344,7 +346,7 @@ public class PCFGParserTester {
 					    		if(prob > parseScores[begin][end - 1].getCount(rule.parent)){
 					    		    parseScores[begin][end - 1].setCount(rule.parent,prob);
 					    		    
-					    		    backHash.put(begin + " "+ (end) + " "+rule.parent, new Triplet<Integer, String, String>(-1, entry , null));
+					    		    backHash.put(new Triplet<Integer, Integer, String>(begin, end, rule.parent), new Triplet<Integer, String, String>(-1, entry , null));
 					    			added = true; 
 					    		 }
 					    		
@@ -383,10 +385,10 @@ public class PCFGParserTester {
 			return new Tree<String>("ROOT", Collections.singletonList(tree));
 		}
 		
-		public Tree<String> getParseTree(List<String> sentence, HashMap<String, Triplet<Integer, String, String>> backHash,int begin, int end,String parent){
+		public Tree<String> getParseTree(List<String> sentence, HashMap<Triplet<Integer, Integer, String>, Triplet<Integer, String, String>> backHash,int begin, int end,String parent){
 			// Start from the root and keep going down till you reach the leafs.
 			if(begin == end -1){
-				Triplet<Integer, String, String> triplet = backHash.get(begin+ " " + end+ " "+parent);
+				Triplet<Integer, String, String> triplet = backHash.get(new Triplet<Integer, Integer, String>(begin, end, parent));
 				int split=-1;
 				if(triplet != null){
 					split = triplet.getFirst();	
@@ -399,7 +401,7 @@ public class PCFGParserTester {
 					Tree<String> singleTree = new Tree<String>(triplet.getSecond());
 					tree.setChildren( Collections.singletonList(singleTree));
 
-					triplet = backHash.get(begin+ " " + end+ " "+triplet.getSecond());
+					triplet = backHash.get(new Triplet<Integer, Integer, String>(begin, end, triplet.getSecond()));
 					if(triplet!=null){
 						split = triplet.getFirst();
 					}
@@ -411,7 +413,7 @@ public class PCFGParserTester {
 				return topTree;
 			}
 
-			Triplet<Integer, String, String> triplet = backHash.get(begin+ " " + end+ " "+parent);
+			Triplet<Integer, String, String> triplet = backHash.get(new Triplet<Integer, Integer, String>(begin, end, parent));
 
 			if(triplet==null){
 				System.out.println(begin+ " " + end+ " "+parent);
@@ -423,7 +425,7 @@ public class PCFGParserTester {
 	     	while(split == -1){
 				Tree<String> singleTree = new Tree<String>(triplet.getSecond());
 				tree.setChildren( Collections.singletonList(singleTree));
-				triplet = backHash.get(begin+ " " + end+ " "+triplet.getSecond());
+				triplet = backHash.get(new Triplet<Integer, Integer, String>(begin, end, triplet.getSecond()));
 				if(triplet!=null){
 				  split = triplet.getFirst();
 				}
@@ -695,6 +697,8 @@ public class PCFGParserTester {
 		}
 		private static Tree<String> markovizeTree(Tree<String> tree, String parentLabel) {
 			String label = tree.getLabel();
+			
+			// Tried using ^ but unannotate didn't remove it. Instead using - since that is properly removed
 			if (parentLabel != null) {
 				label = label + "-" + parentLabel;
 			}
